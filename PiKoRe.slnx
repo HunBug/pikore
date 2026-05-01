@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PiKoRe.Core/PiKoRe.Core.csproj" />
+    <Project Path="src/PiKoRe.Data/PiKoRe.Data.csproj" />
+    <Project Path="src/PiKoRe.Plugins.Exif/PiKoRe.Plugins.Exif.csproj" />
+    <Project Path="src/PiKoRe.Plugins.Thumbnails/PiKoRe.Plugins.Thumbnails.csproj" />
+    <Project Path="src/PiKoRe.UI/PiKoRe.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PiKoRe.Core.Tests/PiKoRe.Core.Tests.csproj" />
+    <Project Path="tests/PiKoRe.Data.Tests/PiKoRe.Data.Tests.csproj" />
+  </Folder>
+</Solution>
