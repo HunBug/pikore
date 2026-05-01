@@ -1,0 +1,42 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/settings.json
+*.DotSettings.user
+
+# Build output
+publish/
+
+# NuGet
+*.nupkg
+.nuget/
+
+# Rider
+.idea/
+
+# Python plugin environments
+plugins/**/venv/
+plugins/**/.venv/
+plugins/**/__pycache__/
+plugins/**/*.pyc
+plugins/**/*.pyo
+
+# Local config overrides (never commit secrets)
+appsettings.local.json
+appsettings.Development.local.json
+
+# Ollama models (large, managed by Docker volume)
+.ollama/
+
+# Logs
+logs/
+*.log
+
+# macOS
+.DS_Store
+
+# Thumbnails / cache (generated, not source)
+.pikore-cache/

@@ -1,0 +1,60 @@
+services:
+
+  # PostgreSQL + pgvector — real data store
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pikore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pikore
+      POSTGRES_USER: pikore
+      POSTGRES_PASSWORD: pikore_dev   # change for any non-local deployment
+    ports:
+      - "5432:5432"
+    volumes:
+      - pikore-postgres-data:/var/lib/postgresql/data
+
+  # Seq — structured log viewer (localhost only, dev tool)
+  seq:
+    image: datalust/seq:latest
+    container_name: pikore-seq
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: Y
+    ports:
+      - "5341:5341"   # ingestion
+      - "8081:80"     # web UI → http://localhost:8081
+    volumes:
+      - pikore-seq-data:/data
+
+  # Ollama — local LLM/VLM model server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pikore-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - pikore-ollama-models:/root/.ollama
+    # Uncomment for NVIDIA GPU passthrough:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  pikore-postgres-data:
+  pikore-seq-data:
+  pikore-ollama-models:
+
+# Usage:
+#   docker compose up -d
+#   Seq UI:      http://localhost:8081
+#   Postgres:    localhost:5432  db=pikore user=pikore pass=pikore_dev
+#   Ollama API:  http://localhost:11434
+#
+# Pull a VLM model for captioning:
+#   docker exec pikore-ollama ollama pull moondream
