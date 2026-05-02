@@ -40,3 +40,7 @@ logs/
 
 # Thumbnails / cache (generated, not source)
 .pikore-cache/
+
+# Local dev workdir — databases, scratch files, test data; keep the directory tracked
+workdir/*
+!workdir/.gitkeep

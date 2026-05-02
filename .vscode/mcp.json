@@ -1,0 +1,39 @@
+{
+  "servers": {
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {}
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+      }
+    },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://pikore:pikore_dev@localhost:5432/pikore"
+      ],
+      "env": {}
+    },
+    "sqlite": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-sqlite",
+        "--db-path",
+        "${workspaceFolder}/workdir/pikore.db"
+      ],
+      "env": {}
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": {}
+    }
+  }
+}
