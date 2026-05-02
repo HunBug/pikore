@@ -103,9 +103,11 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 - [ ] **`Pipeline/LocalSequentialRunner.cs`** — implements `IJobRunner`:
   - `SemaphoreSlim _gpuSlot = new(1,1)` — one GPU job at a time
   - `SemaphoreSlim _cpuSlots = new(4,4)` — configurable N (from `IConfiguration`)
-  - Calls `IInProcessPlugin.AnalyzeAsync` for in-process, `IPluginHttpClient.CallAsync` for external
+  - Resolves plugin via `IEnumerable<IInProcessPlugin>` injected by DI — picks the one whose `CapabilitiesProduced` contains the job's capability
+  - If no plugin found for capability: fails the job with a clear error (no silent swallow)
   - Publishes `JobCompletedEvent` or `JobFailedEvent` via `IMediator`
   - Wraps plugin call with Polly retry (3 attempts, exponential backoff) on transient errors
+  - No HTTP calls — all dispatch is direct `IInProcessPlugin.AnalyzeAsync` (see D-021)
 
 - [ ] **`Pipeline/PipelineWorker.cs`** — `BackgroundService` that:
   - Polls `IJobQueue.DequeueAsync` in a loop (100ms interval — keep it simple)
@@ -152,7 +154,7 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
   - `POST /debug/jobs/{id}/retry` — re-enqueues a failed job
   - `POST /debug/plugins/{name}/ping` — calls plugin `GET /health`, logs result
 
-- [ ] **`PluginHttpClient.cs`** — `IHttpClientFactory`-based client. `CallAsync(IExternalPlugin plugin, AnalysisRequest request, CancellationToken ct)` → `AnalysisResult`. Wraps with Polly retry. Logs `plugin_name`, `job_id` on every call.
+- [ ] **`SqlitePluginRegistry.cs`** — implements `IPluginRegistry` using `Microsoft.Data.Sqlite`. Stores/reads `ExternalPluginInfo` records from the `plugin_registry` table. Used by the registration endpoint and by adapter plugins that need to look up an external service's endpoint at runtime.
 
 ---
 
@@ -238,13 +240,22 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 
 ---
 
-## Phase 8 — CLIP Python Plugin
+## Phase 8 — CLIP Python Service + C# Adapter Plugin
 
-**Goal:** `plugins/clip-embedder/` is a FastAPI plugin that accepts an image path, computes a 512-dim CLIP embedding via `sentence-transformers`, writes it to the `embeddings` PostgreSQL table, and registers with core on startup.
+**Goal:** `plugins/clip-embedder/` is a FastAPI service that computes 512-dim CLIP embeddings. A C# adapter plugin (`PiKoRe.Plugins.ClipAdapter`) wraps it as an `IInProcessPlugin`, handling all HTTP transport. Core sees only `IInProcessPlugin` — no HTTP in the pipeline engine (see D-021).
 
-**Done when:** Plugin starts, registers at `:7700/api/plugins/register`, processes one job triggered by the pipeline, and `/debug/files/{id}` shows an embedding row for that file.
+**Done when:** Python service running, C# adapter registered in DI, pipeline processes one job, `/debug/files/{id}` shows an embedding row.
 
 ### Tasks
+
+- [ ] **`src/PiKoRe.Plugins.ClipAdapter/ClipAdapterPlugin.cs`** — C# adapter, implements `IInProcessPlugin`:
+  - `CapabilitiesProduced`: `[Capabilities.Embedding]`
+  - `RequiredCapabilities`: `[Capabilities.Thumbnail]`
+  - Reads CLIP service endpoint from `IConfiguration["Plugins:ClipEmbedder:Endpoint"]` (default `http://localhost:5001`)
+  - Calls `POST /analyze` on the Python service via `IHttpClientFactory` with Polly retry
+  - Parses response, writes embedding to PostgreSQL via `IMediaStore`
+  - Logs with `file_id`, `job_id` context
+  - This is the only place in the codebase that knows the Python service exists
 
 - [ ] **`plugins/clip-embedder/plugin.json`**:
   ```json
@@ -341,3 +352,5 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 - Every async method touching I/O takes `CancellationToken ct` as last parameter.
 - No `Console.WriteLine` in production code — use `Serilog`.
 - After completing any phase, update CURRENT_STATE.md and append any new decisions to DECISIONS.md.
+- **D-021**: Core never makes outbound HTTP calls for plugin dispatch. `LocalSequentialRunner` only calls `IInProcessPlugin.AnalyzeAsync`. External services (Python, etc.) are wrapped by a C# adapter plugin in `src/PiKoRe.Plugins.*/`. Do not add `IPluginHttpClient` or any HTTP client to `PiKoRe.Core` or `PiKoRe.Data`.
+- **D-022**: `IExternalPlugin` interface does not exist. External plugin metadata is `ExternalPluginInfo` (a record). Do not reintroduce `IExternalPlugin`.

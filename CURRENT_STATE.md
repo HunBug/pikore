@@ -10,17 +10,18 @@
 ---
 
 ## Last session
-Phase 2 — Core Interfaces + DB Schemas. All public contracts in `PiKoRe.Core` defined, both migration files written, `DatabaseMigrator.cs` wired with DbUp, integration test passes against a live Testcontainers PostgreSQL + pgvector instance. `dotnet build`: 0 errors, 2 warnings (same Avalonia transitive dep as Phase 1). `dotnet test`: 2/2 passed.
+Pre-Phase 3 architectural decisions (D-021, D-022): `IExternalPlugin` removed, `ExternalPluginInfo` record added, `IPluginRegistry` updated. These are breaking changes to Phase 2 interfaces — made before any Phase 3 implementation started, so no concrete code was affected. `dotnet build`: 0 errors, 2 warnings (same Avalonia transitive dep).
 
 ---
 
-## What was done (Phase 2)
+## What was done (Phase 2 + pre-Phase 3 cleanup)
 
 ### 2a — Core interfaces (`src/PiKoRe.Core/`)
-- `Models/` — `JobStatus` (enum), `IndexedFile`, `AnalysisRequest`, `AnalysisResult` (+ `FaceResult`), `Job`, `JobResult`
+- `Models/` — `JobStatus` (enum), `IndexedFile`, `AnalysisRequest`, `AnalysisResult` (+ `FaceResult`), `Job`, `JobResult`, `ExternalPluginInfo`
 - `Constants/Capabilities.cs` — `Exif`, `Thumbnail`, `Embedding`, `Tags`, `Faces`, `Description`, `NsfwScore`, `AestheticScore`
-- `Abstractions/` — `IPlugin`, `IInProcessPlugin`, `IExternalPlugin`, `IPluginRegistry`, `IJobQueue`, `IJobRunner`, `IFileScanner`, `IMediaStore`
+- `Abstractions/` — `IPlugin`, `IInProcessPlugin`, `IPluginRegistry` (uses `ExternalPluginInfo`), `IJobQueue`, `IJobRunner`, `IFileScanner`, `IMediaStore`
 - `Events/` — `FileIndexedEvent`, `JobCompletedEvent`, `JobFailedEvent`, `PluginRegisteredEvent` (all `INotification` records)
+- `IExternalPlugin` was created in Phase 2 then **removed** (D-022) — replaced by `ExternalPluginInfo` record
 
 ### 2b — SQLite schema
 - `src/PiKoRe.Data/Migrations/SQLite/0001_initial_schema.sql` — `plugin_registry`, `file_index`, `job_queue`, `pipeline_config`, `system_config`. WAL mode enabled.
@@ -66,7 +67,9 @@ Done when: `PiKoRe.Core.Tests` verifies enqueue → run → `JobCompletedEvent` 
 - D-017: `net10.0` (SDK 10.0.104 LTS)
 - D-018: `Polly.Extensions.Http` omitted from Core
 - D-019: Solution file is `.slnx`
-- (Phase 2) SQL migration files are embedded resources in `PiKoRe.Data.dll`, not filesystem paths. More reliable for deployment — no dependency on working directory.
+- D-020: SQL migration files are embedded resources in `PiKoRe.Data.dll`
+- D-021: Core dispatch is `IInProcessPlugin`-only. No HTTP in the pipeline engine. External services are wrapped by C# adapter plugins.
+- D-022: `IExternalPlugin` interface removed. External plugin metadata is `ExternalPluginInfo` (record). `IPluginRegistry` updated accordingly.
 
 ---
 
