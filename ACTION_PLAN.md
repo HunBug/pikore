@@ -21,351 +21,72 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 
 ---
 
-## Phase 1 — .NET Solution Skeleton
+## Phase 1 — .NET Solution Skeleton ✅ COMPLETE
 
 **Goal:** Compilable, empty projects with correct references. No logic yet.
 
 **Done when:** `dotnet build` exits 0 with no warnings. Solution visible in IDE with all projects.
 
+**Actual outcome:** `dotnet build` exits 0, 2 warnings (unfixable Avalonia transitive dep NU1903). All 7 projects created, all references wired, all packages added.
+
 ### Tasks
 
-- [ ] **Rename gitignore → .gitignore** at repository root (currently named `gitignore`, not picked up by git).
+- [x] **Rename gitignore → .gitignore** at repository root.
 
-- [ ] **Create solution**
-  ```
-  dotnet new sln -n PiKoRe
-  ```
+- [x] **Create solution** — `PiKoRe.slnx` (`.slnx` format, .NET 10 SDK default — see D-019).
 
-- [ ] **Create projects** (all target `net9.0`):
-  ```
-  dotnet new classlib -n PiKoRe.Core        -o src/PiKoRe.Core
-  dotnet new classlib -n PiKoRe.Data        -o src/PiKoRe.Data
-  dotnet new avalonia -n PiKoRe.UI          -o src/PiKoRe.UI          --framework net9.0
-  dotnet new classlib -n PiKoRe.Plugins.Exif      -o src/PiKoRe.Plugins.Exif
-  dotnet new classlib -n PiKoRe.Plugins.Thumbnails -o src/PiKoRe.Plugins.Thumbnails
-  dotnet new xunit    -n PiKoRe.Core.Tests  -o tests/PiKoRe.Core.Tests
-  dotnet new xunit    -n PiKoRe.Data.Tests  -o tests/PiKoRe.Data.Tests
-  ```
-  Add all to solution:
-  ```
-  dotnet sln add src/**/*.csproj tests/**/*.csproj
-  ```
+- [x] **Create projects** — all target `net10.0` (changed from plan's `net9.0` — see D-017):
+  - `src/PiKoRe.Core/`, `src/PiKoRe.Data/`, `src/PiKoRe.UI/`
+  - `src/PiKoRe.Plugins.Exif/`, `src/PiKoRe.Plugins.Thumbnails/`
+  - `tests/PiKoRe.Core.Tests/`, `tests/PiKoRe.Data.Tests/`
 
-- [ ] **Project references**:
-  - `PiKoRe.Data` → `PiKoRe.Core`
-  - `PiKoRe.UI` → `PiKoRe.Core`, `PiKoRe.Data`
-  - `PiKoRe.Plugins.Exif` → `PiKoRe.Core`
-  - `PiKoRe.Plugins.Thumbnails` → `PiKoRe.Core`
-  - `PiKoRe.Core.Tests` → `PiKoRe.Core`
-  - `PiKoRe.Data.Tests` → `PiKoRe.Data`, `PiKoRe.Core`
+- [x] **Project references** wired as planned.
 
-- [ ] **Add NuGet packages** to each project:
+- [x] **Add NuGet packages** — `Polly.Extensions.Http` was skipped (deprecated in Polly v8, see D-018). All others added as planned.
 
-  *PiKoRe.Core*:
-  - `Microsoft.Extensions.Hosting.Abstractions`
-  - `MediatR`
-  - `Serilog`
-  - `Serilog.Extensions.Hosting`
-  - `OpenTelemetry`
-  - `OpenTelemetry.Api`
-  - `Polly`
-  - `Polly.Extensions.Http`
+- [x] **Delete** auto-generated `Class1.cs` / `UnitTest1.cs` stubs.
 
-  *PiKoRe.Data*:
-  - `Npgsql`
-  - `Dapper`
-  - `Microsoft.Data.Sqlite`
-  - `DbUp-Core`
-  - `DbUp-PostgreSQL`
-  - `DbUp-SQLite`
+- [x] **Create empty directory structure**: `Migrations/SQLite/`, `Migrations/PostgreSQL/`, `plugins/`.
 
-  *PiKoRe.UI*:
-  - `Avalonia`
-  - `Avalonia.Desktop`
-  - `Avalonia.Themes.Fluent`
-  - `Serilog.Sinks.Console`
-  - `Serilog.Sinks.File`
-  - `Serilog.Sinks.Seq`
-  - `OpenTelemetry.Extensions.Hosting`
-  - `OpenTelemetry.Exporter.OpenTelemetryProtocol`
-
-  *PiKoRe.Plugins.Exif*:
-  - `MetadataExtractor`
-
-  *PiKoRe.Plugins.Thumbnails*:
-  - `SixLabors.ImageSharp`
-  - `FFMpegCore`
-
-  *PiKoRe.Core.Tests*, *PiKoRe.Data.Tests*:
-  - `xunit`
-  - `xunit.runner.visualstudio`
-  - `NSubstitute`
-  - `Testcontainers.PostgreSql` (Data.Tests only)
-
-- [ ] **Delete** auto-generated `Class1.cs` placeholder files from all classlib projects.
-
-- [ ] **Create empty directory structure**:
-  ```
-  src/PiKoRe.Data/Migrations/SQLite/
-  src/PiKoRe.Data/Migrations/PostgreSQL/
-  plugins/             (empty, placeholder for external plugins)
-  ```
-
-- [ ] **Verify**: `dotnet build` exits 0.
+- [x] **Verify**: `dotnet build` exits 0 (2 warnings — Avalonia transitive dep, not actionable).
 
 ---
 
-## Phase 2 — Core Interfaces + DB Schemas
+## Phase 2 — Core Interfaces + DB Schemas ✅ COMPLETE
 
 **Goal:** All public contracts in `PiKoRe.Core` defined. Both DB schemas applied by DbUp. No implementation beyond interfaces.
 
-**Done when:** `dotnet build` succeeds. `dotnet test` passes (trivially — no logic yet). DbUp can run against a live Postgres + SQLite and apply initial schema with no errors.
+**Actual outcome:** `dotnet build` 0 errors. `dotnet test` 2/2 passed (Testcontainers PostgreSQL + pgvector). All interfaces, models, events, migration files, and `DatabaseMigrator` created.
 
 ### Tasks
 
-#### 2a — Core interfaces (`src/PiKoRe.Core/`)
+#### 2a — Core interfaces (`src/PiKoRe.Core/`) ✅
 
-- [ ] **`Abstractions/IPlugin.cs`** — base interface for all plugins (in-process and external):
-  ```csharp
-  public interface IPlugin
-  {
-      string Name { get; }
-      string Version { get; }
-      IReadOnlyList<string> CapabilitiesProduced { get; }
-      IReadOnlyList<string> RequiredCapabilities { get; }
-  }
-  ```
+- [x] **`Abstractions/IPlugin.cs`**
+- [x] **`Abstractions/IInProcessPlugin.cs`**
+- [x] **`Abstractions/IExternalPlugin.cs`**
+- [x] **`Abstractions/IPluginRegistry.cs`**
+- [x] **`Abstractions/IJobQueue.cs`**
+- [x] **`Abstractions/IJobRunner.cs`**
+- [x] **`Abstractions/IFileScanner.cs`**
+- [x] **`Abstractions/IMediaStore.cs`**
+- [x] **`Models/`** — `Job`, `JobResult`, `AnalysisRequest`, `AnalysisResult` (+ companion `FaceResult`), `IndexedFile`, `JobStatus`
+- [x] **`Constants/Capabilities.cs`** — `Exif`, `Thumbnail`, `Embedding`, `Tags`, `Faces`, `Description`, `NsfwScore`, `AestheticScore`
+- [x] **`Events/`** — `FileIndexedEvent`, `JobCompletedEvent`, `JobFailedEvent`, `PluginRegisteredEvent`
 
-- [ ] **`Abstractions/IInProcessPlugin.cs`** — interface for C# plugins running in-process:
-  ```csharp
-  public interface IInProcessPlugin : IPlugin
-  {
-      Task<AnalysisResult> AnalyzeAsync(AnalysisRequest request, CancellationToken ct);
-  }
-  ```
+#### 2b — SQLite schema ✅
 
-- [ ] **`Abstractions/IExternalPlugin.cs`** — represents a registered external (HTTP) plugin:
-  ```csharp
-  public interface IExternalPlugin : IPlugin
-  {
-      Uri Endpoint { get; }
-      int GpuMemoryMb { get; }
-  }
-  ```
+- [x] **`src/PiKoRe.Data/Migrations/SQLite/0001_initial_schema.sql`** — 5 tables + WAL mode.
 
-- [ ] **`Abstractions/IPluginRegistry.cs`**:
-  ```csharp
-  public interface IPluginRegistry
-  {
-      Task RegisterAsync(IExternalPlugin plugin, CancellationToken ct);
-      Task DeregisterAsync(string name, CancellationToken ct);
-      Task<IReadOnlyList<IPlugin>> GetAllAsync(CancellationToken ct);
-      Task<IPlugin?> GetByCapabilityAsync(string capability, CancellationToken ct);
-  }
-  ```
+#### 2c — PostgreSQL schema ✅
 
-- [ ] **`Abstractions/IJobQueue.cs`**:
-  ```csharp
-  public interface IJobQueue
-  {
-      Task EnqueueAsync(Job job, CancellationToken ct);
-      Task<Job?> DequeueAsync(CancellationToken ct);
-      Task MarkCompletedAsync(Guid jobId, CancellationToken ct);
-      Task MarkFailedAsync(Guid jobId, string error, CancellationToken ct);
-  }
-  ```
+- [x] **`src/PiKoRe.Data/Migrations/PostgreSQL/0001_initial_schema.sql`** — 9 tables, pgvector extension, HNSW index.
 
-- [ ] **`Abstractions/IJobRunner.cs`**:
-  ```csharp
-  public interface IJobRunner
-  {
-      Task<JobResult> RunAsync(Job job, CancellationToken ct);
-  }
-  ```
+#### 2d — DbUp wiring ✅
 
-- [ ] **`Abstractions/IFileScanner.cs`**:
-  ```csharp
-  public interface IFileScanner
-  {
-      Task ScanAsync(string libraryPath, CancellationToken ct);
-      IAsyncEnumerable<IndexedFile> WatchAsync(string libraryPath, CancellationToken ct);
-  }
-  ```
-
-- [ ] **`Abstractions/IMediaStore.cs`**:
-  ```csharp
-  public interface IMediaStore
-  {
-      Task<IndexedFile?> GetByIdAsync(Guid fileId, CancellationToken ct);
-      Task<IReadOnlyList<IndexedFile>> SearchByEmbeddingAsync(float[] queryVector, int limit, CancellationToken ct);
-      Task UpsertMetadataAsync(Guid fileId, string key, string value, string sourcePlugin, CancellationToken ct);
-      Task UpsertTagAsync(Guid fileId, string label, float confidence, string sourcePlugin, CancellationToken ct);
-      Task UpsertEmbeddingAsync(Guid fileId, string modelId, float[] vector, CancellationToken ct);
-      Task UpsertDescriptionAsync(Guid fileId, string text, string sourcePlugin, CancellationToken ct);
-  }
-  ```
-
-- [ ] **`Models/`** — record types (no logic):
-  - `Job.cs` — `Guid Id`, `Guid FileId`, `string Capability`, `JobStatus Status`, `Guid? PluginId`, `int Priority`, `DateTimeOffset Created`, `DateTimeOffset Updated`, `string? Error`
-  - `JobResult.cs` — `Guid JobId`, `bool Success`, `string? Error`, `AnalysisResult? Result`
-  - `AnalysisRequest.cs` — `Guid JobId`, `Guid FileId`, `string FilePath`, `string? PreviewPath`
-  - `AnalysisResult.cs` — nullable collections: `Tags`, `Faces`, `float[]? Embedding`, `Dictionary<string,float>? Scores`, `string? Description`
-  - `IndexedFile.cs` — `Guid Id`, `string Path`, `long SizeBytes`, `DateTimeOffset MTime`, `string Hash`, `DateTimeOffset IngestedAt`
-  - `JobStatus.cs` — enum: `Queued`, `Running`, `Completed`, `Failed`
-
-- [ ] **`Constants/Capabilities.cs`** — static class with `public const string` for each capability: `Exif`, `Thumbnail`, `Embedding`, `Tags`, `Faces`, `Description`, `NsfwScore`, `AestheticScore`
-
-- [ ] **`Events/`** — MediatR `INotification` records:
-  - `FileIndexedEvent.cs` — `IndexedFile File`
-  - `JobCompletedEvent.cs` — `JobResult Result`
-  - `JobFailedEvent.cs` — `Guid JobId`, `string Error`
-  - `PluginRegisteredEvent.cs` — `string PluginName`
-
-#### 2b — SQLite schema (`src/PiKoRe.Data/Migrations/SQLite/`)
-
-- [ ] **`0001_initial_schema.sql`**:
-  ```sql
-  CREATE TABLE IF NOT EXISTS plugin_registry (
-      id          TEXT PRIMARY KEY,
-      name        TEXT NOT NULL UNIQUE,
-      version     TEXT NOT NULL,
-      endpoint    TEXT,
-      capabilities_produced TEXT NOT NULL,  -- JSON array
-      required_capabilities TEXT NOT NULL,  -- JSON array
-      gpu_memory_mb INTEGER NOT NULL DEFAULT 0,
-      status      TEXT NOT NULL DEFAULT 'active',
-      config_json TEXT,
-      registered_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS file_index (
-      id          TEXT PRIMARY KEY,
-      path        TEXT NOT NULL UNIQUE,
-      size_bytes  INTEGER NOT NULL,
-      mtime       TEXT NOT NULL,
-      hash        TEXT NOT NULL,
-      ingested_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS job_queue (
-      id          TEXT PRIMARY KEY,
-      file_id     TEXT NOT NULL,
-      capability  TEXT NOT NULL,
-      status      TEXT NOT NULL DEFAULT 'queued',
-      plugin_id   TEXT,
-      priority    INTEGER NOT NULL DEFAULT 0,
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
-      error       TEXT,
-      FOREIGN KEY (file_id) REFERENCES file_index(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS pipeline_config (
-      id          TEXT PRIMARY KEY,
-      dag_json    TEXT NOT NULL,
-      updated_at  TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS system_config (
-      key         TEXT PRIMARY KEY,
-      value       TEXT NOT NULL
-  );
-
-  PRAGMA journal_mode=WAL;
-  ```
-
-#### 2c — PostgreSQL schema (`src/PiKoRe.Data/Migrations/PostgreSQL/`)
-
-- [ ] **`0001_initial_schema.sql`**:
-  ```sql
-  CREATE EXTENSION IF NOT EXISTS vector;
-
-  CREATE TABLE IF NOT EXISTS thumbnails (
-      file_id     UUID NOT NULL,
-      size_class  TEXT NOT NULL,
-      data_path   TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (file_id, size_class)
-  );
-
-  CREATE TABLE IF NOT EXISTS metadata (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      file_id     UUID NOT NULL,
-      key         TEXT NOT NULL,
-      value       TEXT NOT NULL,
-      source_plugin TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (file_id, key, source_plugin)
-  );
-
-  CREATE TABLE IF NOT EXISTS tags (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      file_id     UUID NOT NULL,
-      label       TEXT NOT NULL,
-      confidence  REAL NOT NULL,
-      source_plugin TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (file_id, label, source_plugin)
-  );
-
-  CREATE TABLE IF NOT EXISTS embeddings (
-      file_id     UUID NOT NULL,
-      model_id    TEXT NOT NULL,
-      vector      vector(512),
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (file_id, model_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS faces (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      file_id     UUID NOT NULL,
-      bbox_json   TEXT NOT NULL,
-      embedding   vector(512),
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-
-  CREATE TABLE IF NOT EXISTS persons (
-      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      name            TEXT NOT NULL,
-      cover_face_id   UUID,
-      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-
-  CREATE TABLE IF NOT EXISTS face_person (
-      face_id     UUID NOT NULL,
-      person_id   UUID NOT NULL,
-      confidence  REAL NOT NULL DEFAULT 1.0,
-      PRIMARY KEY (face_id, person_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS scores (
-      file_id     UUID NOT NULL,
-      key         TEXT NOT NULL,
-      value       REAL NOT NULL,
-      source_plugin TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (file_id, key, source_plugin)
-  );
-
-  CREATE TABLE IF NOT EXISTS descriptions (
-      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      file_id     UUID NOT NULL,
-      text        TEXT NOT NULL,
-      source_plugin TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_embeddings_vector ON embeddings USING hnsw (vector vector_cosine_ops);
-  CREATE INDEX IF NOT EXISTS idx_tags_file_id ON tags (file_id);
-  CREATE INDEX IF NOT EXISTS idx_metadata_file_id ON metadata (file_id);
-  CREATE INDEX IF NOT EXISTS idx_faces_file_id ON faces (file_id);
-  ```
-
-#### 2d — DbUp wiring (`src/PiKoRe.Data/`)
-
-- [ ] **`DatabaseMigrator.cs`** — static class with `MigrateSqlite(string connectionString)` and `MigratePostgres(string connectionString)`. Each scans the appropriate `Migrations/` folder using DbUp. Throws on failure. Logs to `ILogger` passed in.
-
-- [ ] **Test**: One test in `PiKoRe.Data.Tests` that spins up a Testcontainers PostgreSQL instance and runs `MigratePostgres`. Assert no exception. Assert `embeddings` table exists.
+- [x] **`DatabaseMigrator.cs`** — SQL files embedded as assembly resources (see D-020). Signatures: `MigrateSqlite(string, ILogger)` and `MigratePostgres(string, ILogger)`. Throws on failure. Contains private `MicrosoftLogAdapter : IUpgradeLog` (DbUp 6.x API).
+- [x] **`PiKoRe.Data.csproj`** — `<EmbeddedResource Include="Migrations/**/*.sql" />` added.
+- [x] **`tests/PiKoRe.Data.Tests/DatabaseMigratorTests.cs`** — 2 tests: schema applied + idempotency. Uses `new PostgreSqlBuilder("pgvector/pgvector:pg16")` (Testcontainers 4.x constructor form — see DISCOVERIES).
 
 ---
 

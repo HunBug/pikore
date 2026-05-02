@@ -5,82 +5,70 @@
 ---
 
 ## Phase
-**Phase 1 complete. Starting Phase 2.**
+**Phase 2 complete. Starting Phase 3.**
 
 ---
 
 ## Last session
-Phase 1 — .NET Solution Skeleton. Created all projects, wired references, added NuGet packages. `dotnet build` exits 0.
+Phase 2 — Core Interfaces + DB Schemas. All public contracts in `PiKoRe.Core` defined, both migration files written, `DatabaseMigrator.cs` wired with DbUp, integration test passes against a live Testcontainers PostgreSQL + pgvector instance. `dotnet build`: 0 errors, 2 warnings (same Avalonia transitive dep as Phase 1). `dotnet test`: 2/2 passed.
 
 ---
 
-## What was done (Phase 1)
+## What was done (Phase 2)
 
-- `.gitignore` already in place (renamed from `gitignore` in a prior commit)
-- `PiKoRe.slnx` created at repo root (.NET 10 SDK uses the new `.slnx` XML format instead of classic `.sln`)
-- All 7 projects created, all targeting `net10.0`:
-  - `src/PiKoRe.Core/` — classlib
-  - `src/PiKoRe.Data/` — classlib
-  - `src/PiKoRe.UI/` — Avalonia app (`avalonia.app` template, TFM corrected to `net10.0`)
-  - `src/PiKoRe.Plugins.Exif/` — classlib
-  - `src/PiKoRe.Plugins.Thumbnails/` — classlib
-  - `tests/PiKoRe.Core.Tests/` — xunit
-  - `tests/PiKoRe.Data.Tests/` — xunit
-- All project references wired (see ACTION_PLAN.md Phase 1 for the graph)
-- NuGet packages added per project (see individual `.csproj` files)
-- Auto-generated `Class1.cs` / `UnitTest1.cs` stubs deleted
-- `src/PiKoRe.Data/Migrations/SQLite/`, `src/PiKoRe.Data/Migrations/PostgreSQL/`, and `plugins/` created with `.gitkeep`
-- `dotnet build`: **0 errors, 2 warnings** (both NU1903 from transitive Avalonia dep `Tmds.DBus.Protocol` 0.16.0 — unfixable until Avalonia ships a newer version)
-- `Polly.Extensions.Http` was skipped — deprecated in Polly v8; base `Polly` package (8.6.6) covers all needs. `Microsoft.Extensions.Http.Polly` should be added to `PiKoRe.Host` in Phase 4 when HTTP resilience is needed.
+### 2a — Core interfaces (`src/PiKoRe.Core/`)
+- `Models/` — `JobStatus` (enum), `IndexedFile`, `AnalysisRequest`, `AnalysisResult` (+ `FaceResult`), `Job`, `JobResult`
+- `Constants/Capabilities.cs` — `Exif`, `Thumbnail`, `Embedding`, `Tags`, `Faces`, `Description`, `NsfwScore`, `AestheticScore`
+- `Abstractions/` — `IPlugin`, `IInProcessPlugin`, `IExternalPlugin`, `IPluginRegistry`, `IJobQueue`, `IJobRunner`, `IFileScanner`, `IMediaStore`
+- `Events/` — `FileIndexedEvent`, `JobCompletedEvent`, `JobFailedEvent`, `PluginRegisteredEvent` (all `INotification` records)
+
+### 2b — SQLite schema
+- `src/PiKoRe.Data/Migrations/SQLite/0001_initial_schema.sql` — `plugin_registry`, `file_index`, `job_queue`, `pipeline_config`, `system_config`. WAL mode enabled.
+
+### 2c — PostgreSQL schema
+- `src/PiKoRe.Data/Migrations/PostgreSQL/0001_initial_schema.sql` — `thumbnails`, `metadata`, `tags`, `embeddings`, `faces`, `persons`, `face_person`, `scores`, `descriptions`. pgvector extension enabled. HNSW index on `embeddings.vector`.
+
+### 2d — DbUp wiring + test
+- `src/PiKoRe.Data/DatabaseMigrator.cs` — static class, embedded-resource SQL scripts, `MicrosoftLogAdapter` bridges `ILogger` to `IUpgradeLog`.
+- SQL files embedded via `<EmbeddedResource Include="Migrations/**/*.sql" />` in `PiKoRe.Data.csproj`.
+- `tests/PiKoRe.Data.Tests/DatabaseMigratorTests.cs` — 2 tests: schema applied, idempotency. Uses `pgvector/pgvector:pg16` image via Testcontainers.
 
 ---
 
 ## Next concrete step
 
-**Phase 2a — Core interfaces** in `src/PiKoRe.Core/`:
+**Phase 3 — Job Queue + Pipeline Engine** in `src/PiKoRe.Data/` and `src/PiKoRe.Core/`:
 
-Create the following files (see ACTION_PLAN.md Phase 2 for exact signatures):
 ```
+src/PiKoRe.Data/
+  SqliteJobQueue.cs          — implements IJobQueue using Microsoft.Data.Sqlite
 src/PiKoRe.Core/
-  Abstractions/
-    IPlugin.cs
-    IInProcessPlugin.cs
-    IExternalPlugin.cs
-    IPluginRegistry.cs
-    IJobQueue.cs
-    IJobRunner.cs
-    IFileScanner.cs
-    IMediaStore.cs
-  Models/
-    Job.cs
-    JobResult.cs
-    AnalysisRequest.cs
-    AnalysisResult.cs
-    IndexedFile.cs
-    JobStatus.cs
-  Constants/
-    Capabilities.cs
-  Events/
-    FileIndexedEvent.cs
-    JobCompletedEvent.cs
-    JobFailedEvent.cs
-    PluginRegisteredEvent.cs
+  Pipeline/
+    LocalSequentialRunner.cs — implements IJobRunner (1 GPU slot, N CPU slots, Polly retry)
+    PipelineWorker.cs        — BackgroundService, polls IJobQueue, dispatches to IJobRunner
+    DagEngine.cs             — INotificationHandler<JobCompletedEvent>, enqueues unblocked jobs
+tests/PiKoRe.Core.Tests/
+  Pipeline/
+    LocalSequentialRunnerTests.cs — NSubstitute stubs, asserts JobCompletedEvent published
 ```
 
-Then Phase 2b/2c: write the SQL migration files. Then Phase 2d: `DatabaseMigrator.cs`.
+Done when: `PiKoRe.Core.Tests` verifies enqueue → run → `JobCompletedEvent` with a stub plugin.
 
 ---
 
 ## Open questions / blockers
-- `Tmds.DBus.Protocol` 0.16.0 vulnerability warning (NU1903): transitive through `Avalonia 11.1.0`. Not actionable until Avalonia releases a patched version. Logged in DISCOVERIES.md.
+- `Tmds.DBus.Protocol` 0.16.0 vulnerability warning (NU1903): transitive through Avalonia. Not actionable.
+- `PiKoRe.Core.Tests` currently has no tests ("No test is available"). That's correct — no logic exists yet. Phase 3 adds the first real test there.
 
 ---
 
 ## Recent decisions
-- D-017: Used `net10.0` (SDK 10.0.104 LTS) instead of `net9.0` (user preference for LTS track)
-- D-018: `Polly.Extensions.Http` omitted — deprecated in Polly v8; revisit with `Microsoft.Extensions.Http.Polly` in Phase 4
+- D-017: `net10.0` (SDK 10.0.104 LTS)
+- D-018: `Polly.Extensions.Http` omitted from Core
+- D-019: Solution file is `.slnx`
+- (Phase 2) SQL migration files are embedded resources in `PiKoRe.Data.dll`, not filesystem paths. More reliable for deployment — no dependency on working directory.
 
 ---
 
 ## Known issues / tech debt
-- NU1903 warning from `Tmds.DBus.Protocol` 0.16.0 (Avalonia transitive dep) — no action possible until Avalonia updates its dependency
+- NU1903 warning from `Tmds.DBus.Protocol` 0.16.0 — no action until Avalonia updates

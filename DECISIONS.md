@@ -26,6 +26,7 @@
 | D-017 | Target `net10.0` (SDK 10.0.104 LTS) for all projects instead of `net9.0`. | net9.0 as originally planned | User preference: always use the current LTS release. .NET 9 is STS, .NET 10 is LTS. | 2026-05 |
 | D-018 | `Polly.Extensions.Http` omitted from `PiKoRe.Core`. Use base `Polly` (8.6.6) + `Microsoft.Extensions.Http.Polly` when HTTP client resilience is needed in Phase 4 (`PiKoRe.Host`). | Include Polly.Extensions.Http | Package is deprecated in Polly v8+; it conflicts with the current Polly API surface. Add `Microsoft.Extensions.Http.Polly` to the host project only, not core. | 2026-05 |
 | D-019 | Solution file is `PiKoRe.slnx` (new XML format). The .NET 10 SDK defaults to `.slnx` instead of the legacy `.sln` format. | Classic .sln | `.slnx` is the supported new format. It is handled transparently by `dotnet` CLI and modern IDEs. No action needed. | 2026-05 |
+| D-020 | SQL migration files are compiled as embedded resources inside `PiKoRe.Data.dll` (via `<EmbeddedResource Include="Migrations/**/*.sql" />`). DbUp loads them with `WithScriptsEmbeddedInAssembly`. | Load from filesystem at runtime | Embedded resources work regardless of working directory or deployment layout. Filesystem approach would require knowing the path to the build output or install location, which varies by environment. | 2026-05 |
 
 ---
 
