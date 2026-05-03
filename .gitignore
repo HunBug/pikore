@@ -24,6 +24,10 @@ plugins/**/__pycache__/
 plugins/**/*.pyc
 plugins/**/*.pyo
 
+# Learning tools venv
+learning/tools/.venv/
+learning/tools/__pycache__/
+
 # Local config overrides (never commit secrets)
 appsettings.local.json
 appsettings.Development.local.json
