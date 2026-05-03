@@ -5,73 +5,85 @@
 ---
 
 ## Phase
-**Phase 2 complete. Starting Phase 3.**
+**Phase 3 complete. Pre-Phase-4 interface and doc cleanup complete. Ready to start Phase 4.**
 
 ---
 
 ## Last session
-Pre-Phase 3 architectural decisions (D-021, D-022): `IExternalPlugin` removed, `ExternalPluginInfo` record added, `IPluginRegistry` updated. These are breaking changes to Phase 2 interfaces — made before any Phase 3 implementation started, so no concrete code was affected. `dotnet build`: 0 errors, 2 warnings (same Avalonia transitive dep).
+Post-Phase-3 review identified and resolved several design gaps before Phase 4 implementation begins. All changes are backward-compatible with Phase 3 code (no existing implementations affected — these are interface and doc changes only).
+
+Changes applied:
+- `IMediaStore` refactored (D-027): `GetByIdAsync` removed, replaced with `GetFileDetailsAsync → FileAnalysisDetails?`; `SearchByEmbeddingAsync` now returns `IReadOnlyList<Guid>` instead of `IReadOnlyList<IndexedFile>`
+- New `FileAnalysisDetails` record in `Core/Models/` — aggregates PostgreSQL analysis data for one file
+- New `IFileIndexStore` interface in `Core/Abstractions/` — owns all SQLite `file_index` operations (D-028); `SqliteFileIndexStore` implementation deferred to Phase 5
+- `IMediaStore.UpsertThumbnailAsync` added (was missing; required by Phase 6 ThumbnailPlugin)
+- `docs/architecture.md` updated: EF Core removed from tech inventory, net10 target, `supported_media_types` in manifest example, D-021 dispatch model clarified
+- `.github/copilot-instructions.md` target updated to .NET 10
+- `ACTION_PLAN.md` expanded: Phase 4 full DI wiring list, Phase 5 pre-req (IFileIndexStore), Phase 9 two-store search flow
+- D-027 and D-028 appended to DECISIONS.md
+
+`dotnet build`: 0 errors, 2 warnings (Avalonia transitive dep — not actionable).
 
 ---
 
-## What was done (Phase 2 + pre-Phase 3 cleanup)
+## What was done (Phase 3 + pre-Phase-4 cleanup)
 
-### 2a — Core interfaces (`src/PiKoRe.Core/`)
-- `Models/` — `JobStatus` (enum), `IndexedFile`, `AnalysisRequest`, `AnalysisResult` (+ `FaceResult`), `Job`, `JobResult`, `ExternalPluginInfo`
-- `Constants/Capabilities.cs` — `Exif`, `Thumbnail`, `Embedding`, `Tags`, `Faces`, `Description`, `NsfwScore`, `AestheticScore`
-- `Abstractions/` — `IPlugin`, `IInProcessPlugin`, `IPluginRegistry` (uses `ExternalPluginInfo`), `IJobQueue`, `IJobRunner`, `IFileScanner`, `IMediaStore`
-- `Events/` — `FileIndexedEvent`, `JobCompletedEvent`, `JobFailedEvent`, `PluginRegisteredEvent` (all `INotification` records)
-- `IExternalPlugin` was created in Phase 2 then **removed** (D-022) — replaced by `ExternalPluginInfo` record
+### Phase 3
+- `Models/Job.cs` — `FilePath?` and `MediaType?` (transient; dequeue-populated via JOIN)
+- `Models/JobResult.cs` — `FileId`, `Capability`, `MediaType?` (D-026)
+- `Abstractions/IJobQueue.cs` — 3 new methods for DagEngine
+- `Data/SqliteJobQueue.cs` — full `IJobQueue` implementation (Dapper, `BEGIN IMMEDIATE`)
+- `Core/Pipeline/LocalSequentialRunner.cs` — `IJobRunner` (semaphores, Polly retry, media-type check)
+- `Core/Pipeline/PipelineWorker.cs` — 100ms-poll `BackgroundService`
+- `Core/Pipeline/DagEngine.cs` — `INotificationHandler<JobCompletedEvent>` (ordering guard included)
+- `Core.Tests/Pipeline/LocalSequentialRunnerTests.cs` — 2 tests, 2/2 passing
 
-### 2b — SQLite schema
-- `src/PiKoRe.Data/Migrations/SQLite/0001_initial_schema.sql` — `plugin_registry`, `file_index`, `job_queue`, `pipeline_config`, `system_config`. WAL mode enabled.
-
-### 2c — PostgreSQL schema
-- `src/PiKoRe.Data/Migrations/PostgreSQL/0001_initial_schema.sql` — `thumbnails`, `metadata`, `tags`, `embeddings`, `faces`, `persons`, `face_person`, `scores`, `descriptions`. pgvector extension enabled. HNSW index on `embeddings.vector`.
-
-### 2d — DbUp wiring + test
-- `src/PiKoRe.Data/DatabaseMigrator.cs` — static class, embedded-resource SQL scripts, `MicrosoftLogAdapter` bridges `ILogger` to `IUpgradeLog`.
-- SQL files embedded via `<EmbeddedResource Include="Migrations/**/*.sql" />` in `PiKoRe.Data.csproj`.
-- `tests/PiKoRe.Data.Tests/DatabaseMigratorTests.cs` — 2 tests: schema applied, idempotency. Uses `pgvector/pgvector:pg16` image via Testcontainers.
+### Pre-Phase-4 cleanup
+- `Models/FileAnalysisDetails.cs` — new record (FileId, Metadata, Tags, ThumbnailPath, HasEmbedding, Description)
+- `Abstractions/IMediaStore.cs` — `GetFileDetailsAsync`, `SearchByEmbeddingAsync → IReadOnlyList<Guid>`, `UpsertThumbnailAsync`
+- `Abstractions/IFileIndexStore.cs` — `GetByPathAsync`, `GetByIdAsync`, `UpsertAsync`
 
 ---
 
 ## Next concrete step
 
-**Phase 3 — Job Queue + Pipeline Engine** in `src/PiKoRe.Data/` and `src/PiKoRe.Core/`:
+**Phase 4 — Plugin Host + Debug Endpoint**
 
+Create `src/PiKoRe.Host/` — new console app project. Full DI wiring task list is in ACTION_PLAN.md Phase 4.
+
+Key things the host must wire:
 ```
-src/PiKoRe.Data/
-  SqliteJobQueue.cs          — implements IJobQueue using Microsoft.Data.Sqlite
-src/PiKoRe.Core/
-  Pipeline/
-    LocalSequentialRunner.cs — implements IJobRunner (1 GPU slot, N CPU slots, Polly retry)
-    PipelineWorker.cs        — BackgroundService, polls IJobQueue, dispatches to IJobRunner
-    DagEngine.cs             — INotificationHandler<JobCompletedEvent>, enqueues unblocked jobs
-tests/PiKoRe.Core.Tests/
-  Pipeline/
-    LocalSequentialRunnerTests.cs — NSubstitute stubs, asserts JobCompletedEvent published
+SqliteJobQueue          → IJobQueue          (singleton)
+SqlitePluginRegistry    → IPluginRegistry    (singleton)
+LocalSequentialRunner   → IJobRunner         (singleton)
+ExifPlugin, ThumbnailPlugin → IInProcessPlugin (singleton each)
+DagEngine               → registered via MediatR assembly scan (covers Core assembly)
+PipelineWorker          → AddHostedService<PipelineWorker>()
+Kestrel                 → Listen(:7700) + Listen(:7701)
+Route groups            → RequireHost("*:7700") / RequireHost("*:7701")
 ```
 
-Done when: `PiKoRe.Core.Tests` verifies enqueue → run → `JobCompletedEvent` with a stub plugin.
+DB migrations run on startup before `app.Run()`.
+
+Done when: `curl :7700/api/plugins/register` adds a plugin; `curl :7701/debug/plugins` returns it.
 
 ---
 
 ## Open questions / blockers
 - `Tmds.DBus.Protocol` 0.16.0 vulnerability warning (NU1903): transitive through Avalonia. Not actionable.
-- `PiKoRe.Core.Tests` currently has no tests ("No test is available"). That's correct — no logic exists yet. Phase 3 adds the first real test there.
+- `SqliteFileIndexStore` not yet implemented — needed by Phase 5 (FileScanner). Interface is defined; implementation is Phase 5 pre-req.
 
 ---
 
 ## Recent decisions
-- D-017: `net10.0` (SDK 10.0.104 LTS)
-- D-018: `Polly.Extensions.Http` omitted from Core
-- D-019: Solution file is `.slnx`
-- D-020: SQL migration files are embedded resources in `PiKoRe.Data.dll`
-- D-021: Core dispatch is `IInProcessPlugin`-only. No HTTP in the pipeline engine. External services are wrapped by C# adapter plugins.
-- D-022: `IExternalPlugin` interface removed. External plugin metadata is `ExternalPluginInfo` (record). `IPluginRegistry` updated accordingly.
+- D-026: `JobResult` carries `MediaType` — avoids extra DB round-trip in `DagEngine`
+- D-027: `IMediaStore` is PostgreSQL-only; `GetByIdAsync` replaced with `GetFileDetailsAsync`; `SearchByEmbeddingAsync` returns file IDs
+- D-028: `IFileIndexStore` owns all SQLite `file_index` operations; `FileScanner` depends on it
 
 ---
 
 ## Known issues / tech debt
 - NU1903 warning from `Tmds.DBus.Protocol` 0.16.0 — no action until Avalonia updates
+- `DequeueAsync` orphans a job if its `file_index` row is deleted between enqueue and dequeue — acceptable for MVP
+- `SqliteFileIndexStore` not yet created — Phase 5 pre-req
+- No `PostgresMediaStore` implementation yet — needed by Phase 6 (plugins write analysis results)

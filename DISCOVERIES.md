@@ -28,7 +28,11 @@
 
 ## Plugin protocol
 
-*(empty)*
+- **`IMediaStore` must not return SQLite models**: `IMediaStore` is the PostgreSQL interface. Returning `IndexedFile` (a SQLite `file_index` record) from it is a leaky abstraction. File-identity data (`path`, `hash`, `mtime`, `media_type`) lives exclusively in SQLite and must be accessed via `IFileIndexStore`. Analysis data (metadata, tags, thumbnails, embeddings, descriptions) lives in PostgreSQL and is accessed via `IMediaStore`. The debug endpoint `/debug/files/{id}` calls both stores and stitches the results. *Discovered: 2026-05 (pre-Phase-4 review, D-027).*
+
+- **`SearchByEmbeddingAsync` must return file IDs, not `IndexedFile` records**: The pgvector ANN query only knows about `file_id` values in the `embeddings` table. Resolving those to `IndexedFile` records (which are in SQLite) would require the PostgreSQL store to cross-query SQLite — a layer violation. The method returns `IReadOnlyList<Guid>` and the caller resolves IDs via `IFileIndexStore`. *Discovered: 2026-05 (pre-Phase-4 review, D-027).*
+
+- **`FileScanner` needs `IFileIndexStore`, not `IJobQueue`**: The scanner must query `file_index` (for skip-if-unchanged) and insert new rows. `IJobQueue` owns jobs, not files. Without a dedicated `IFileIndexStore` interface, the scanner would have to take a raw SQLite connection or expand `IJobQueue` — both are wrong. `IFileIndexStore` (Core) + `SqliteFileIndexStore` (Data) follow the same pattern as `IJobQueue`/`SqliteJobQueue`. *Discovered: 2026-05 (pre-Phase-4 review, D-028).*
 
 ---
 

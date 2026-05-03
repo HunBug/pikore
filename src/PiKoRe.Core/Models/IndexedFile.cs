@@ -6,5 +6,6 @@ public sealed record IndexedFile(
     long SizeBytes,
     DateTimeOffset MTime,
     string Hash,
-    DateTimeOffset IngestedAt
+    DateTimeOffset IngestedAt,
+    string MediaType
 );

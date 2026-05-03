@@ -56,27 +56,28 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 
 **Goal:** All public contracts in `PiKoRe.Core` defined. Both DB schemas applied by DbUp. No implementation beyond interfaces.
 
-**Actual outcome:** `dotnet build` 0 errors. `dotnet test` 2/2 passed (Testcontainers PostgreSQL + pgvector). All interfaces, models, events, migration files, and `DatabaseMigrator` created.
+**Actual outcome:** `dotnet build` 0 errors. `dotnet test` 2/2 passed (Testcontainers PostgreSQL + pgvector). All interfaces, models, events, migration files, and `DatabaseMigrator` created. Post-phase addendum applied (D-023, D-024, D-025): `SupportedMediaTypes` added to `IPlugin` and `ExternalPluginInfo`; `MediaType` added to `IndexedFile`; `MediaTypes` constants class created; SQLite migration `0002_add_media_type_columns.sql` added.
 
 ### Tasks
 
 #### 2a — Core interfaces (`src/PiKoRe.Core/`) ✅
 
-- [x] **`Abstractions/IPlugin.cs`**
+- [x] **`Abstractions/IPlugin.cs`** — includes `SupportedMediaTypes: IReadOnlyList<string>` (see D-024)
 - [x] **`Abstractions/IInProcessPlugin.cs`**
-- [x] **`Abstractions/IExternalPlugin.cs`**
 - [x] **`Abstractions/IPluginRegistry.cs`**
 - [x] **`Abstractions/IJobQueue.cs`**
 - [x] **`Abstractions/IJobRunner.cs`**
 - [x] **`Abstractions/IFileScanner.cs`**
 - [x] **`Abstractions/IMediaStore.cs`**
-- [x] **`Models/`** — `Job`, `JobResult`, `AnalysisRequest`, `AnalysisResult` (+ companion `FaceResult`), `IndexedFile`, `JobStatus`
+- [x] **`Models/`** — `Job`, `JobResult`, `AnalysisRequest`, `AnalysisResult` (+ `FaceResult`), `IndexedFile` (includes `MediaType`), `JobStatus`, `ExternalPluginInfo` (includes `SupportedMediaTypes`)
 - [x] **`Constants/Capabilities.cs`** — `Exif`, `Thumbnail`, `Embedding`, `Tags`, `Faces`, `Description`, `NsfwScore`, `AestheticScore`
+- [x] **`Constants/MediaTypes.cs`** — `Image`, `Video`, `Audio`, `All` constants; `FromExtension(string)` helper; `IsSupported(string, IReadOnlyList<string>)` helper
 - [x] **`Events/`** — `FileIndexedEvent`, `JobCompletedEvent`, `JobFailedEvent`, `PluginRegisteredEvent`
 
 #### 2b — SQLite schema ✅
 
 - [x] **`src/PiKoRe.Data/Migrations/SQLite/0001_initial_schema.sql`** — 5 tables + WAL mode.
+- [x] **`src/PiKoRe.Data/Migrations/SQLite/0002_add_media_type_columns.sql`** — adds `media_type` to `file_index`; adds `supported_media_types` to `plugin_registry`.
 
 #### 2c — PostgreSQL schema ✅
 
@@ -84,39 +85,65 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 
 #### 2d — DbUp wiring ✅
 
-- [x] **`DatabaseMigrator.cs`** — SQL files embedded as assembly resources (see D-020). Signatures: `MigrateSqlite(string, ILogger)` and `MigratePostgres(string, ILogger)`. Throws on failure. Contains private `MicrosoftLogAdapter : IUpgradeLog` (DbUp 6.x API).
+- [x] **`DatabaseMigrator.cs`** — SQL files embedded as assembly resources (see D-020). Signatures: `MigrateSqlite(string, ILogger)` and `MigratePostgres(string, ILogger)`. Throws on failure.
 - [x] **`PiKoRe.Data.csproj`** — `<EmbeddedResource Include="Migrations/**/*.sql" />` added.
-- [x] **`tests/PiKoRe.Data.Tests/DatabaseMigratorTests.cs`** — 2 tests: schema applied + idempotency. Uses `new PostgreSqlBuilder("pgvector/pgvector:pg16")` (Testcontainers 4.x constructor form — see DISCOVERIES).
+- [x] **`tests/PiKoRe.Data.Tests/DatabaseMigratorTests.cs`** — 2 tests: schema applied + idempotency.
 
 ---
 
-## Phase 3 — Job Queue + Pipeline Engine
+## Phase 3 — Job Queue + Pipeline Engine ✅ COMPLETE
 
-**Goal:** Working job queue backed by SQLite. `LocalSequentialRunner` executes jobs. MediatR events fire on completion. Background service drains the queue.
+**Goal:** Working job queue backed by SQLite. `LocalSequentialRunner` executes jobs. MediatR events fire on completion. Background service drains the queue. DagEngine chains capabilities based on `pipeline_config` and plugin declarations.
 
-**Done when:** `PiKoRe.Core.Tests` verifies that enqueuing a job, running the pipeline, and receiving the `JobCompletedEvent` all work end-to-end with a stub plugin.
+**Actual outcome:** `dotnet build` 0 errors. `dotnet test` 4/4 passed (2 new Core pipeline tests + 2 existing Data tests). All model changes, `SqliteJobQueue`, and pipeline components created.
+
+### Model changes (apply before implementing)
+
+- [x] **`Models/Job.cs`** — add `FilePath` and `MediaType` fields. Both are populated via JOIN with `file_index` in `DequeueAsync`; no schema change needed (they live in `file_index`).
+
+- [x] **`Models/JobResult.cs`** — add `FileId`, `Capability`, and `MediaType` fields (see D-026). `FileId` and `Capability` required by `DagEngine` to determine which capability completed for which file. `MediaType` required by `DagEngine` to check plugin compatibility without a second DB round-trip — the event fires before `PipelineWorker` calls `MarkCompletedAsync`, so the DB row is still `running` at handler time.
+
+- [x] **`Abstractions/IJobQueue.cs`** — add three methods needed by `DagEngine`:
+  - `Task<IReadOnlyList<string>> GetCompletedCapabilitiesForFileAsync(Guid fileId, CancellationToken ct)`
+  - `Task<bool> JobExistsForFileAndCapabilityAsync(Guid fileId, string capability, CancellationToken ct)`
+  - `Task<string?> GetPipelineConfigDagJsonAsync(CancellationToken ct)`
 
 ### Tasks
 
-- [ ] **`Data/SqliteJobQueue.cs`** — implements `IJobQueue` using `Microsoft.Data.Sqlite`. Uses parameterised queries only. WAL mode must be set on connection open. Threads `CancellationToken`.
+- [x] **`Data/SqliteJobQueue.cs`** — implements `IJobQueue` using Dapper + `Microsoft.Data.Sqlite`. Reads connection string from `IConfiguration["ConnectionStrings:SQLite"]`. Each method opens a new connection and executes `PRAGMA journal_mode=WAL`. Uses parameterised queries only. `DequeueAsync` uses `BEGIN IMMEDIATE` (raw SQL) for atomic select + update.
+  - `EnqueueAsync` — INSERT into `job_queue` (FilePath/MediaType are NOT stored — populated at dequeue time via JOIN)
+  - `DequeueAsync` — `BEGIN IMMEDIATE` → SELECT + JOIN `file_index` to populate `FilePath` and `MediaType` → UPDATE status to `running` → `COMMIT`
+  - `MarkCompletedAsync` / `MarkFailedAsync` — UPDATE status + `updated_at` (+ `error`)
+  - `GetCompletedCapabilitiesForFileAsync` — SELECT capability WHERE file\_id=@id AND status='completed'
+  - `JobExistsForFileAndCapabilityAsync` — SELECT COUNT(\*) WHERE file\_id=@id AND capability=@cap AND status NOT IN ('failed')
+  - `GetPipelineConfigDagJsonAsync` — SELECT dag\_json FROM pipeline\_config ORDER BY updated\_at DESC LIMIT 1
 
-- [ ] **`Pipeline/LocalSequentialRunner.cs`** — implements `IJobRunner`:
-  - `SemaphoreSlim _gpuSlot = new(1,1)` — one GPU job at a time
-  - `SemaphoreSlim _cpuSlots = new(4,4)` — configurable N (from `IConfiguration`)
-  - Resolves plugin via `IEnumerable<IInProcessPlugin>` injected by DI — picks the one whose `CapabilitiesProduced` contains the job's capability
-  - If no plugin found for capability: fails the job with a clear error (no silent swallow)
-  - Publishes `JobCompletedEvent` or `JobFailedEvent` via `IMediator`
-  - Wraps plugin call with Polly retry (3 attempts, exponential backoff) on transient errors
-  - No HTTP calls — all dispatch is direct `IInProcessPlugin.AnalyzeAsync` (see D-021)
+- [x] **`Pipeline/LocalSequentialRunner.cs`** — implements `IJobRunner`:
+  - `SemaphoreSlim _gpuSlot = new(1,1)` — reserved; all Phase 3 jobs use CPU slots
+  - `SemaphoreSlim _cpuSlots = new(N,N)` — N from `int.TryParse(config["Pipeline:MaxCpuSlots"], ...) ?? 4`
+  - Resolves plugin via `IEnumerable<IInProcessPlugin>` — picks first whose `CapabilitiesProduced` contains `job.Capability` AND `SupportedMediaTypes` matches `job.MediaType` (use `MediaTypes.IsSupported`)
+  - No plugin found → fail job with clear error message; publish `JobFailedEvent`; no silent swallow
+  - Wraps `plugin.AnalyzeAsync` with Polly `ResiliencePipelineBuilder` retry (3 attempts, exponential backoff, 500ms base, jitter)
+  - Success → publish `JobCompletedEvent`; exception after retries → publish `JobFailedEvent`
+  - Structured log: `_logger.ForContext("job_id", ...).ForContext("capability", ...).ForContext("media_type", ...)`
 
-- [ ] **`Pipeline/PipelineWorker.cs`** — `BackgroundService` that:
-  - Polls `IJobQueue.DequeueAsync` in a loop (100ms interval — keep it simple)
-  - Dispatches each job to `IJobRunner`
-  - Uses structured logging: `Log.ForContext("job_id", job.Id).ForContext("capability", job.Capability)`
+- [x] **`Pipeline/PipelineWorker.cs`** — `BackgroundService`:
+  - Polls `IJobQueue.DequeueAsync` in a loop; 100ms delay when queue is empty
+  - Dispatches to `IJobRunner.RunAsync`; calls `MarkCompletedAsync` or `MarkFailedAsync` based on `JobResult.Success`
+  - Structured log per job with `job_id` and `capability`
 
-- [ ] **`Pipeline/DagEngine.cs`** — given a completed `AnalysisResult`, reads pipeline config from SQLite, determines which capabilities are now unblocked, enqueues new jobs. Triggered by `INotificationHandler<JobCompletedEvent>`.
+- [x] **`Pipeline/DagEngine.cs`** — `INotificationHandler<JobCompletedEvent>`:
+  - Reads enabled capability list from `IJobQueue.GetPipelineConfigDagJsonAsync()` (JSON array of strings, see D-023); returns early if null
+  - Adds `notification.Result.Capability` to the completed set before querying DB — guards against the ordering issue where `PipelineWorker` hasn't yet called `MarkCompletedAsync` when this handler runs
+  - For each enabled capability not yet queued or completed for this file:
+    1. Find the registered `IInProcessPlugin` that produces it and supports `notification.Result.MediaType` (from `JobResult` — see D-026)
+    2. Check all of that plugin's `RequiredCapabilities` are in the completed set (via `GetCompletedCapabilitiesForFileAsync`)
+    3. If unblocked and no duplicate (via `JobExistsForFileAndCapabilityAsync`) → `EnqueueAsync`
+  - Structured log with `file_id`, `completed_capability`, `unblocked_capabilities`
 
-- [ ] **Test**: `PiKoRe.Core.Tests/Pipeline/LocalSequentialRunnerTests.cs` — uses `NSubstitute` stubs for `IJobQueue` and an `IInProcessPlugin` that returns a fixed `AnalysisResult`. Asserts `JobCompletedEvent` is published.
+- [x] **Test: `PiKoRe.Core.Tests/Pipeline/LocalSequentialRunnerTests.cs`**:
+  - `RunAsync_PluginFound_PublishesJobCompletedEvent` — NSubstitute stub plugin returns fixed `AnalysisResult`; assert `JobCompletedEvent` published and `result.Success == true`
+  - `RunAsync_NoPlugin_PublishesJobFailedEvent` — no plugins registered; assert `JobFailedEvent` published and `result.Success == false`
 
 ---
 
@@ -128,65 +155,107 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 
 ### Tasks
 
-- [ ] **Add `Microsoft.AspNetCore.App` framework reference** to `PiKoRe.Core` or a new `PiKoRe.Host` project (decide: minimal API hosted in Core, or separate). Recommendation: separate `PiKoRe.Host` project — keeps Core free of ASP.NET dependency.
+- [ ] **Create `PiKoRe.Host` project** (console app, net10.0):
+  - Add to `PiKoRe.slnx`
+  - `<FrameworkReference Include="Microsoft.AspNetCore.App" />`
+  - Project references: `PiKoRe.Core`, `PiKoRe.Data`, `PiKoRe.Plugins.Exif`, `PiKoRe.Plugins.Thumbnails`
+  - NuGet: `Serilog.AspNetCore`, `Microsoft.Extensions.Http.Polly`
 
-- [ ] **`PiKoRe.Host` project** (classlib → console app, net9.0):
-  - Reference: `PiKoRe.Core`, `PiKoRe.Data`, all plugin projects
-  - NuGet: `Microsoft.AspNetCore.App` (framework ref), `Serilog.AspNetCore`
+- [ ] **`Program.cs` — DI wiring and host startup**:
+  - `builder.UseSerilog(...)` — Serilog as the .NET `ILogger` provider
+  - MediatR: `services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblies(typeof(DagEngine).Assembly, typeof(Program).Assembly))` — must cover both Core and Host assemblies
+  - `services.AddSingleton<IJobQueue, SqliteJobQueue>()`
+  - `services.AddSingleton<IPluginRegistry, SqlitePluginRegistry>()`
+  - `services.AddSingleton<IJobRunner, LocalSequentialRunner>()`
+  - In-process plugins (order matters — first match wins in LocalSequentialRunner):
+    `services.AddSingleton<IInProcessPlugin, ExifPlugin>()`
+    `services.AddSingleton<IInProcessPlugin, ThumbnailPlugin>()`
+  - `services.AddHostedService<PipelineWorker>()`
+  - Kestrel two-port binding (see port strategy decision):
+    ```csharp
+    builder.WebHost.ConfigureKestrel(o => {
+        o.Listen(IPAddress.Loopback, 7700);
+        o.Listen(IPAddress.Loopback, 7701);
+    });
+    ```
+  - `IHttpClientFactory` for adapter plugins: `services.AddHttpClient()`
+  - DB migration on startup: call `DatabaseMigrator.MigrateSqlite(...)` and `DatabaseMigrator.MigratePostgres(...)` before `app.Run()`
+
+- [ ] **Port routing** — use `RequireHost` on route groups (ASP.NET Core 8+ pattern):
+  ```csharp
+  app.MapGroup("/api").RequireHost("*:7700").MapPluginEndpoints();
+  app.MapGroup("/debug").RequireHost("*:7701").MapDebugEndpoints();
+  ```
+  This enforces port separation at the routing layer, not middleware. Avoids the `UseWhen(ctx.Connection.LocalPort == ...)` anti-pattern which is soft and unreliable.
 
 - [ ] **Plugin registration endpoint** (`POST /api/plugins/register`):
-  - Accepts `PluginRegistrationRequest` JSON (name, version, endpoint, capabilities_produced, requires_capabilities, gpu_memory_mb)
-  - Calls `IPluginRegistry.RegisterAsync`
-  - Publishes `PluginRegisteredEvent`
-  - Returns 200 with assigned plugin ID
+  - Accepts `PluginRegistrationRequest` JSON — name, version, endpoint, capabilities\_produced, required\_capabilities, **supported\_media\_types**, gpu\_memory\_mb
+  - Maps to `ExternalPluginInfo` (all fields including `SupportedMediaTypes`)
+  - Calls `IPluginRegistry.RegisterAsync`; publishes `PluginRegisteredEvent`; returns 200 with assigned plugin ID
 
 - [ ] **Job progress endpoint** (`POST /api/jobs/{jobId}/progress`):
-  - Accepts `{ "percent": int, "message": string }`
-  - Logs with `job_id` context (does not store — display only in debug endpoint)
+  - Accepts `{ "percent": int, "message": string }`; logs with `job_id` context (display only)
 
-- [ ] **Debug endpoints** (all `GET`, all bound to `:7701`):
-  - `/debug/plugins` — all registered plugins + status
-  - `/debug/jobs/running` — currently executing jobs
-  - `/debug/jobs/queued` — queue depth per capability
-  - `/debug/jobs/failed` — last 50 failures with error detail
-  - `/debug/pipeline/dag` — current DAG JSON from SQLite
-  - `/debug/files/{id}` — all analysis results for one file (queries PostgreSQL)
+- [ ] **Debug endpoints** (route group bound to `:7701` via `RequireHost`):
+  - `GET /debug/plugins` — all registered plugins + status + supported\_media\_types
+  - `GET /debug/jobs/running` — currently executing jobs
+  - `GET /debug/jobs/queued` — queue depth per capability
+  - `GET /debug/jobs/failed` — last 50 failures with error detail
+  - `GET /debug/pipeline/dag` — current enabled capability list from `pipeline_config`
+  - `GET /debug/files/{id}` — combines `IFileIndexStore.GetByIdAsync` (path/mtime/media_type from SQLite) + `IMediaStore.GetFileDetailsAsync` (metadata/tags/thumbnail/embedding from PostgreSQL) into one JSON response
   - `POST /debug/jobs/{id}/retry` — re-enqueues a failed job
-  - `POST /debug/plugins/{name}/ping` — calls plugin `GET /health`, logs result
+  - `POST /debug/plugins/{name}/ping` — calls plugin `GET /health` via `IHttpClientFactory`, logs result
 
-- [ ] **`SqlitePluginRegistry.cs`** — implements `IPluginRegistry` using `Microsoft.Data.Sqlite`. Stores/reads `ExternalPluginInfo` records from the `plugin_registry` table. Used by the registration endpoint and by adapter plugins that need to look up an external service's endpoint at runtime.
+- [ ] **`SqlitePluginRegistry.cs`** — implements `IPluginRegistry`. Stores/reads `ExternalPluginInfo` records (including `SupportedMediaTypes` as JSON) from `plugin_registry`.
 
 ---
 
 ## Phase 5 — File Scanner + Indexing
 
-**Goal:** Given a configured library path, core recursively scans for image/video files, computes SHA-256 hashes, and writes to SQLite `file_index`. Publishes `FileIndexedEvent` for new/changed files.
+**Goal:** Given configured library paths, core recursively scans for image, video, and audio files, computes SHA-256 hashes, writes to SQLite `file_index` with correct `media_type`, and publishes `FileIndexedEvent`.
 
-**Done when:** Pointing the scanner at a real photo folder results in populated `file_index` rows. `FileIndexedEvent` fires for each new file. Duplicate scans are idempotent.
+**Done when:** Pointing the scanner at a folder with mixed media results in populated `file_index` rows with correct `media_type` values. `FileIndexedEvent` fires per new file. Duplicate scans are idempotent.
+
+### Pre-requisite (define before implementing FileScanner)
+
+- [ ] **`Abstractions/IFileIndexStore.cs`** (Core) — interface for SQLite `file_index` operations. `FileScanner` depends on this; `SqliteJobQueue` does NOT handle file indexing.
+  - `Task<IndexedFile?> GetByPathAsync(string path, CancellationToken ct)` — used for skip-if-unchanged check
+  - `Task UpsertAsync(IndexedFile file, CancellationToken ct)` — insert or update `file_index` row
+  - `Task<IndexedFile?> GetByIdAsync(Guid fileId, CancellationToken ct)` — used by debug endpoint + DagEngine context
+- [ ] **`Data/SqliteFileIndexStore.cs`** (Data) — implements `IFileIndexStore`. Same pattern as `SqliteJobQueue`: `IConfiguration["ConnectionStrings:SQLite"]`, Dapper, WAL pragma per connection.
+- [ ] Register `IFileIndexStore → SqliteFileIndexStore` as singleton in `PiKoRe.Host/Program.cs` (add alongside other Phase 4 registrations, or defer to Phase 5 startup).
 
 ### Tasks
 
 - [ ] **`FileScanner/FileScanner.cs`** — implements `IFileScanner`:
-  - Supported extensions: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.heic`, `.mp4`, `.mov`, `.mkv`, `.avi`
-  - Uses `FileSystemWatcher` for `WatchAsync`
+  - Supported extensions (see D-025):
+    - Images: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.heic`, `.heif`, `.tiff`, `.bmp`
+    - Videos: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`
+    - Audio: `.mp3`, `.flac`, `.wav`, `.aac`, `.m4a`, `.ogg`, `.opus`, `.wma`
+  - Uses `MediaTypes.FromExtension(ext)` to determine and store `MediaType` on each `IndexedFile`
+  - Skips files where `(path, mtime, size)` triple matches an existing row — no re-hash
   - Computes SHA-256 using `System.Security.Cryptography.SHA256`
-  - Skips files whose `(path, mtime, size)` triple matches an existing row — no re-hash needed
-  - Publishes `FileIndexedEvent` via `IMediator` for new or modified files
+  - Uses `FileSystemWatcher` for `WatchAsync`
+  - Publishes `FileIndexedEvent` (carries `IndexedFile` including `MediaType`) via `IMediator`
   - Threads `CancellationToken` through all I/O
 
-- [ ] **Configuration**: Library path(s) read from `IConfiguration` key `"LibraryPaths"` (string array). Stored in `system_config` SQLite table after first run.
+- [ ] **Configuration**: Library path(s) from `IConfiguration["LibraryPaths"]` (string array). Stored in `system_config` after first run.
 
-- [ ] **`FileIndexedHandler.cs`** — `INotificationHandler<FileIndexedEvent>` that enqueues one job per capability in the configured pipeline (starting with `Exif`, then `Thumbnail`).
+- [ ] **`FileIndexedHandler.cs`** — `INotificationHandler<FileIndexedEvent>`:
+  - Gets enabled capability list from `IJobQueue.GetPipelineConfigDagJsonAsync()`
+  - For each enabled capability whose plugin has empty `RequiredCapabilities` AND `SupportedMediaTypes` matches the file's `MediaType`: enqueue a new `Job`
+  - When constructing `Job` to enqueue, pass `null` for `FilePath` and `null` for `MediaType` — both are populated by `DequeueAsync` via JOIN with `file_index`, not stored in `job_queue`
+  - This ensures audio files don't get thumbnail/embedding jobs, and image-only capabilities don't fire for videos
 
-- [ ] **Test**: `PiKoRe.Core.Tests/FileScanner/FileScannerTests.cs` — create temp directory with 3 image files, run `ScanAsync`, assert 3 rows in a mock `IJobQueue`. Run again, assert no new rows (idempotent).
+- [ ] **Test**: `PiKoRe.Core.Tests/FileScanner/FileScannerTests.cs` — temp directory with 1 JPEG + 1 MP3 + 1 MP4. Run `ScanAsync`. Assert 3 rows with correct `MediaType` values. Assert no new rows on second scan (idempotent).
 
 ---
 
 ## Phase 6 — In-Process Plugins: Exif + Thumbnail
 
-**Goal:** `PiKoRe.Plugins.Exif` extracts EXIF metadata and writes to PostgreSQL `metadata` table. `PiKoRe.Plugins.Thumbnails` generates a 256px JPEG thumbnail and writes its path to `thumbnails` table.
+**Goal:** `PiKoRe.Plugins.Exif` extracts metadata from images, videos, and audio. `PiKoRe.Plugins.Thumbnails` generates previews for images and videos (audio gets no thumbnail in MVP).
 
-**Done when:** Manually triggering the pipeline on one photo results in `metadata` rows in Postgres and a thumbnail file on disk. Visible via `/debug/files/{id}`.
+**Done when:** Triggering the pipeline on a JPEG produces `metadata` rows in Postgres and a thumbnail on disk. Triggering on an MP3 produces `metadata` rows but no thumbnail job (correct via `SupportedMediaTypes` filtering). Visible via `/debug/files/{id}`.
 
 ### Tasks
 
@@ -196,11 +265,11 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
   - `Name`: `"exif-extractor"`
   - `CapabilitiesProduced`: `[Capabilities.Exif]`
   - `RequiredCapabilities`: `[]`
-  - Uses `MetadataExtractor` to read all EXIF/IPTC/GPS tags
-  - Calls `IMediaStore.UpsertMetadataAsync` for each tag (key=`"{directory}.{tag}"`, value=`tag.Description`)
-  - Structured log: `Log.ForContext("file_id", request.FileId).ForContext("plugin", Name)`
+  - `SupportedMediaTypes`: `[MediaTypes.Image, MediaTypes.Video, MediaTypes.Audio]` — MetadataExtractor handles EXIF, ID3, MP4/container tags
+  - Uses `MetadataExtractor` to read all tags; calls `IMediaStore.UpsertMetadataAsync` per tag (key=`"{directory}.{tag}"`)
+  - Structured log: `file_id`, `plugin`, `media_type`
 
-- [ ] **Test**: One test with a real JPEG fixture file. Assert at least one `metadata` row is written (use in-memory SQLite or Testcontainers Postgres).
+- [ ] **Test**: JPEG fixture → assert metadata rows written. MP3 fixture → assert ID3 tags written.
 
 #### ThumbnailGenerator (`src/PiKoRe.Plugins.Thumbnails/`)
 
@@ -208,33 +277,34 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
   - `Name`: `"thumbnail-generator"`
   - `CapabilitiesProduced`: `[Capabilities.Thumbnail]`
   - `RequiredCapabilities`: `[]`
-  - Images: use `ImageSharp` to resize to max 256px on longest side, save as JPEG to `~/.config/pikore/thumbnails/{fileId}.jpg`
-  - Videos: use `FFMpegCore` to extract frame at 00:00:01, then same resize
+  - `SupportedMediaTypes`: `[MediaTypes.Image, MediaTypes.Video]` — audio is excluded; DagEngine will not enqueue thumbnail jobs for audio files
+  - Images: `ImageSharp` resize to max 256px on longest side, JPEG output to `~/.config/pikore/thumbnails/{fileId}.jpg`
+  - Videos: `FFMpegCore` frame extract at 00:00:01, then same resize
   - Calls `IMediaStore.UpsertThumbnailAsync` with size class `"256"` and data path
-  - Returns `AnalysisResult` with `PreviewPath` set (allows downstream plugins to use thumbnail instead of full file)
+  - Returns `AnalysisResult` with `PreviewPath` set
 
-- [ ] **Test**: One test with a real JPEG fixture. Assert thumbnail file exists on disk at expected path.
+- [ ] **Test**: JPEG fixture → thumbnail file exists. Video fixture → thumbnail file exists.
 
 ---
 
 ## Phase 7 — Avalonia UI Skeleton
 
-**Goal:** App window shows a virtual scrolling grid of thumbnails read from the `thumbnails` Postgres table. No search yet. No selection detail. Just the grid.
+**Goal:** App window shows a virtual scrolling grid of thumbnails. No search yet.
 
-**Done when:** Launching the app with photos already indexed shows their thumbnails in a responsive grid. Scrolling works without visible jank. No crashes.
+**Done when:** Launching the app with photos already indexed shows thumbnails in a responsive grid without jank or crashes.
 
 ### Tasks
 
 - [ ] **`App.axaml`** layout:
   - `DockPanel` root
-  - Left: `NavigationPanel` (sidebar, 200px wide) — static items: "All", "By Date", "By Tag", "Settings" (no behaviour in MVP)
-  - Center: `VirtualScrollGrid` (custom control or `ItemsRepeater` with virtualization)
+  - Left: `NavigationPanel` (200px) — static items: All, By Date, By Tag, Settings (no behaviour in MVP)
+  - Center: `VirtualScrollGrid`
 
-- [ ] **`ViewModels/MainViewModel.cs`** — `INotifyPropertyChanged`. Exposes `ObservableCollection<ThumbnailItem>`. On load, queries `IMediaStore` for first 200 thumbnails. Loads more on scroll (20 at a time).
+- [ ] **`ViewModels/MainViewModel.cs`** — `INotifyPropertyChanged`. `ObservableCollection<ThumbnailItem>`. Loads first 200 thumbnails on startup; loads 20 more on scroll.
 
-- [ ] **`ThumbnailItem.cs`** — `FileId`, `ThumbnailPath`, `FileName`. Loaded async; image decode on background thread.
+- [ ] **`ThumbnailItem.cs`** — `FileId`, `ThumbnailPath`, `FileName`, `MediaType`. Image decode on background thread.
 
-- [ ] **`Controls/ThumbnailGrid.axaml`** — `ItemsRepeater` with `UniformGridLayout`. Each cell: `Image` bound to `ThumbnailPath`, 256×256, `Stretch.UniformToFill`.
+- [ ] **`Controls/ThumbnailGrid.axaml`** — `ItemsRepeater` with `UniformGridLayout`. Each cell: `Image` bound to `ThumbnailPath`, 256×256, `Stretch.UniformToFill`. Video and audio items show a media-type overlay icon (simple visual distinction, no playback in MVP).
 
 - [ ] **App wiring**: `Program.cs` builds `IHost` with all services registered. DI in `App.axaml.cs`.
 
@@ -242,20 +312,19 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 
 ## Phase 8 — CLIP Python Service + C# Adapter Plugin
 
-**Goal:** `plugins/clip-embedder/` is a FastAPI service that computes 512-dim CLIP embeddings. A C# adapter plugin (`PiKoRe.Plugins.ClipAdapter`) wraps it as an `IInProcessPlugin`, handling all HTTP transport. Core sees only `IInProcessPlugin` — no HTTP in the pipeline engine (see D-021).
+**Goal:** `plugins/clip-embedder/` is a FastAPI service computing 512-dim CLIP embeddings for images. A C# adapter wraps it as `IInProcessPlugin`. Core sees only `IInProcessPlugin`.
 
-**Done when:** Python service running, C# adapter registered in DI, pipeline processes one job, `/debug/files/{id}` shows an embedding row.
+**Done when:** Python service running, adapter registered in DI, pipeline processes one image job, `/debug/files/{id}` shows an embedding row. Audio and video-only files are correctly skipped (no embedding job enqueued).
 
 ### Tasks
 
-- [ ] **`src/PiKoRe.Plugins.ClipAdapter/ClipAdapterPlugin.cs`** — C# adapter, implements `IInProcessPlugin`:
+- [ ] **`src/PiKoRe.Plugins.ClipAdapter/ClipAdapterPlugin.cs`** — implements `IInProcessPlugin`:
   - `CapabilitiesProduced`: `[Capabilities.Embedding]`
   - `RequiredCapabilities`: `[Capabilities.Thumbnail]`
-  - Reads CLIP service endpoint from `IConfiguration["Plugins:ClipEmbedder:Endpoint"]` (default `http://localhost:5001`)
+  - `SupportedMediaTypes`: `[MediaTypes.Image]` — CLIP is a visual model; video frames not supported in MVP
+  - Reads endpoint from `IConfiguration["Plugins:ClipEmbedder:Endpoint"]` (default `http://localhost:5001`)
   - Calls `POST /analyze` on the Python service via `IHttpClientFactory` with Polly retry
-  - Parses response, writes embedding to PostgreSQL via `IMediaStore`
-  - Logs with `file_id`, `job_id` context
-  - This is the only place in the codebase that knows the Python service exists
+  - Writes embedding to PostgreSQL via `IMediaStore`
 
 - [ ] **`plugins/clip-embedder/plugin.json`**:
   ```json
@@ -264,6 +333,7 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
     "version": "1.0.0",
     "capabilities_produced": ["embedding"],
     "requires_capabilities": ["thumbnail"],
+    "supported_media_types": ["image/*"],
     "endpoint": "http://localhost:5001",
     "gpu_memory_mb": 800,
     "startup_command": null
@@ -271,74 +341,62 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
   ```
 
 - [ ] **`plugins/clip-embedder/plugin.py`** — FastAPI app:
-  - `GET /health` — returns `{"status":"ok"}`
-  - `POST /analyze` — receives `AnalysisRequest` JSON, loads image from `preview_path`, runs CLIP, returns embedding as `float[]`
-  - On startup: `POST http://localhost:7700/api/plugins/register` with manifest data (retry with backoff)
-  - Writes embedding directly to Postgres via `asyncpg` + `pgvector`
-  - Structured logging: include `job_id` and `file_id` in every log line
+  - `GET /health` — `{"status":"ok"}`
+  - `POST /analyze` — receives `AnalysisRequest` JSON, loads image from `preview_path`, runs CLIP, returns `float[]`
+  - `POST /embed-text` — encodes a text query string with CLIP, returns `float[]` (needed by Phase 9 search)
+  - On startup: `POST http://localhost:7700/api/plugins/register` with manifest (retry with backoff)
+  - Structured logging with `job_id`, `file_id`
 
-- [ ] **`plugins/clip-embedder/requirements.txt`**:
-  ```
-  fastapi==0.115.0
-  uvicorn[standard]==0.32.0
-  sentence-transformers==3.2.0
-  Pillow==11.0.0
-  numpy==2.1.0
-  asyncpg==0.30.0
-  pgvector==0.3.5
-  httpx==0.27.0
-  ```
+- [ ] **`plugins/clip-embedder/requirements.txt`** and **`install.sh`** as originally planned.
 
-- [ ] **`plugins/clip-embedder/install.sh`**:
-  ```bash
-  #!/usr/bin/env bash
-  python3 -m venv .venv
-  .venv/bin/pip install -r requirements.txt
-  echo "clip-embedder installed successfully."
-  ```
+- [ ] **Enable `"embedding"` in `pipeline_config`** — document in the quickstart that the user must add `"embedding"` to the enabled list after installing the CLIP plugin (see D-023).
 
 ---
 
 ## Phase 9 — Text Search
 
-**Goal:** Search bar in the UI sends a CLIP text query to the backend, which embeds the query and returns the top-20 visually matching files via pgvector ANN.
+**Goal:** Search bar sends a CLIP text query; backend embeds it and returns top-20 visually matching images via pgvector ANN.
 
-**Done when:** Typing "sunset beach" in the search bar shows relevant photos within 1 second.
+**Note:** Embedding-based search returns **image results only** in MVP — only images have CLIP embeddings. Audio and video files appear in the grid but not in embedding search results. A future phase may add audio transcription search and video keyframe embedding.
+
+**Done when:** Typing "sunset beach" returns relevant photos within 1 second.
 
 ### Tasks
 
-- [ ] **`IMediaStore.SearchByEmbeddingAsync`** (already in interface) — implement in `PostgresMediaStore.cs` using Dapper:
+- [ ] **`IMediaStore.SearchByEmbeddingAsync`** — implement in `PostgresMediaStore.cs` (returns `IReadOnlyList<Guid>` — file IDs only, see D-027):
   ```sql
-  SELECT file_id FROM embeddings
-  ORDER BY vector <=> @queryVector LIMIT @limit
+  SELECT file_id FROM embeddings ORDER BY vector <=> @queryVector LIMIT @limit
   ```
 
-- [ ] **Text-to-embedding endpoint**: A lightweight in-process helper that calls the CLIP Python plugin's `POST /embed-text` endpoint (add this endpoint to Phase 8 plugin) and returns a `float[]`. Alternatively, add a `sentence-transformers` CLIP text encoder as a second in-process plugin — simpler.
+- [ ] **Text-to-embedding**: call `POST /embed-text` on the CLIP plugin via `IHttpClientFactory`. Add endpoint to Phase 8 plugin (same model, text encoder path).
 
-  Recommendation: add `POST /embed-text` to the CLIP plugin (same process, same model, just encodes text instead of image). Core calls it via `PluginHttpClient`.
+- [ ] **`MainViewModel.SearchCommand`** — flow:
+  1. Call CLIP `POST /embed-text` → `float[]` query vector
+  2. Call `IMediaStore.SearchByEmbeddingAsync(vector, 20)` → `IReadOnlyList<Guid>` file IDs
+  3. For each ID call `IFileIndexStore.GetByIdAsync` → `IndexedFile` (to get path + media_type for ThumbnailItem)
+  4. Update `ObservableCollection<ThumbnailItem>`
 
-- [ ] **`MainViewModel.SearchCommand`** — `ICommand` that:
-  1. Calls text embedding
-  2. Calls `IMediaStore.SearchByEmbeddingAsync`
-  3. Updates `ObservableCollection<ThumbnailItem>` with results
-
-- [ ] **Search bar in UI**: `TextBox` + search button in the top bar. Bound to `MainViewModel.SearchCommand`.
+- [ ] **Search bar in UI**: `TextBox` + search button in top bar. Bound to `SearchCommand`. Results show only items with embeddings; if no results, display "No matching images found" (not an error).
 
 ---
 
 ## Phase 10 — MVP Polish + Integration Test
 
-**Goal:** End-to-end: configure folder → scan → thumbnails appear → CLIP runs → text search returns results. All phases working together.
+**Goal:** End-to-end: configure folder → scan → thumbnails appear → CLIP runs → text search returns results. All phases working together across image, video, and audio files.
 
-**Done when:** Fresh machine setup (docker compose up, install.sh, dotnet run) achieves the MVP steps in `docs/architecture.md` §MVP.
+**Done when:** Fresh machine setup achieves the MVP steps in `docs/architecture.md §MVP`.
 
 ### Tasks
 
-- [ ] **appsettings.json** with sane defaults: DB connection strings, port numbers, library paths placeholder.
+- [ ] **`appsettings.json`** with sane defaults: DB connection strings, port numbers, library paths placeholder, `Pipeline:MaxCpuSlots`, `Pipeline:EnabledCapabilities` (initial value: `["exif","thumbnail"]`).
 - [ ] **README.md** quick-start: prerequisites, `docker compose up -d`, `install.sh` for each plugin, `dotnet run`.
-- [ ] **Logging verification**: confirm Seq at `:8081` receives structured events with `file_id`, `plugin_name`, `job_id` context.
-- [ ] **Error recovery test**: kill the CLIP plugin mid-job. Verify job marked `Failed`. Verify `/debug/jobs/retry` re-runs it. Verify no crash in core.
-- [ ] **Idempotency test**: scan same folder twice. Verify no duplicate `file_index` rows, no duplicate jobs.
+- [ ] **Logging verification**: confirm Seq at `:8081` receives structured events with `file_id`, `plugin_name`, `job_id`, `media_type` context.
+- [ ] **Media type coverage test**: scan a folder with 1 JPEG + 1 MP4 + 1 MP3. Assert:
+  - JPEG: exif ✓, thumbnail ✓, embedding ✓ (after CLIP installed)
+  - MP4: exif ✓, thumbnail ✓, embedding ✗ (not queued — CLIP is image-only)
+  - MP3: exif ✓, thumbnail ✗ (not queued — ThumbnailPlugin declares `[image/*, video/*]`), embedding ✗
+- [ ] **Error recovery test**: kill CLIP plugin mid-job. Verify job marked `Failed`. Retry via `/debug/jobs/retry`. No crash in core.
+- [ ] **Idempotency test**: scan same folder twice. No duplicate `file_index` rows, no duplicate jobs.
 - [ ] **Performance baseline**: 100-photo folder. Time from scan-start to all thumbnails visible. Target: < 60 seconds on dev machine.
 
 ---
@@ -352,5 +410,12 @@ These are pending — record each as a new DECISIONS.md row when confirmed.
 - Every async method touching I/O takes `CancellationToken ct` as last parameter.
 - No `Console.WriteLine` in production code — use `Serilog`.
 - After completing any phase, update CURRENT_STATE.md and append any new decisions to DECISIONS.md.
-- **D-021**: Core never makes outbound HTTP calls for plugin dispatch. `LocalSequentialRunner` only calls `IInProcessPlugin.AnalyzeAsync`. External services (Python, etc.) are wrapped by a C# adapter plugin in `src/PiKoRe.Plugins.*/`. Do not add `IPluginHttpClient` or any HTTP client to `PiKoRe.Core` or `PiKoRe.Data`.
-- **D-022**: `IExternalPlugin` interface does not exist. External plugin metadata is `ExternalPluginInfo` (a record). Do not reintroduce `IExternalPlugin`.
+- **D-021**: Core never makes outbound HTTP calls for plugin dispatch. External services are wrapped by a C# adapter plugin.
+- **D-022**: `IExternalPlugin` interface does not exist. Use `ExternalPluginInfo` record.
+- **D-023**: `pipeline_config.dag_json` is a flat JSON array of enabled capability names. Graph topology comes from plugin declarations. New plugins are not auto-added.
+- **D-024**: `IPlugin.SupportedMediaTypes` is the single source of truth for file-type filtering. Use `MediaTypes.IsSupported(fileMediaType, plugin.SupportedMediaTypes)`. Never filter by file type inside plugin logic — return a clean `AnalysisResult` or let the DagEngine skip the job before it is even enqueued.
+- **D-025**: Audio files are first-class citizens. Scanner supports `.mp3`, `.flac`, `.wav`, `.aac`, `.m4a`, `.ogg`, `.opus`, `.wma`. Audio-specific analysis capabilities (transcription, fingerprinting) are post-MVP.
+- **D-026**: `JobResult` carries `FileId`, `Capability`, and `MediaType`. `MediaType` is included so `DagEngine` can check plugin compatibility without a second DB query — the event fires while the job row is still `running` (before `PipelineWorker` calls `MarkCompletedAsync`), so querying the DB for media type would require an extra `IMediaStore` or file-index query. `LocalSequentialRunner` populates all three from the `Job` it just executed.
+- **D-027**: `IMediaStore` is PostgreSQL-only. `GetByIdAsync` removed; replaced with `GetFileDetailsAsync → FileAnalysisDetails?`. `SearchByEmbeddingAsync` returns `IReadOnlyList<Guid>` (file IDs only). `IndexedFile` must never appear on a PostgreSQL interface. The debug endpoint `/debug/files/{id}` calls both `IFileIndexStore.GetByIdAsync` (SQLite, for identity) and `IMediaStore.GetFileDetailsAsync` (PostgreSQL, for analysis data) and stitches them into a response DTO.
+- **D-028**: `IFileIndexStore` (Core) + `SqliteFileIndexStore` (Data) own all SQLite `file_index` operations. Methods: `GetByPathAsync`, `GetByIdAsync`, `UpsertAsync`. `FileScanner` depends on `IFileIndexStore`, not `IJobQueue`. Defined in Phase 5 pre-req.
+- **Job constructor note**: When constructing `Job` objects to pass to `EnqueueAsync`, always pass `null` for `FilePath` and `null` for `MediaType`. These are transient fields populated at dequeue time via JOIN with `file_index`; they are never written to `job_queue`.

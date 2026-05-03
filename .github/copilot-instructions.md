@@ -21,7 +21,7 @@ Always read these files first — they tell you where the project is right now:
 - **Migrations:** DbUp with numbered `.sql` files in `src/PiKoRe.Data/Migrations/`. Never `ALTER TABLE` manually.
 - **In-process events:** MediatR.
 - **Resilience:** Polly on all external calls (plugin HTTP, DB).
-- **Target:** .NET 9+. No legacy .NET Framework patterns.
+- **Target:** .NET 10 (current LTS). No legacy .NET Framework patterns.
 
 ## Non-negotiable code rules
 

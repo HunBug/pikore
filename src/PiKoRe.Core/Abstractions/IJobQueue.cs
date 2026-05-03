@@ -9,4 +9,7 @@ public interface IJobQueue
     Task<Job?> DequeueAsync(CancellationToken ct);
     Task MarkCompletedAsync(Guid jobId, CancellationToken ct);
     Task MarkFailedAsync(Guid jobId, string error, CancellationToken ct);
+    Task<IReadOnlyList<string>> GetCompletedCapabilitiesForFileAsync(Guid fileId, CancellationToken ct);
+    Task<bool> JobExistsForFileAndCapabilityAsync(Guid fileId, string capability, CancellationToken ct);
+    Task<string?> GetPipelineConfigDagJsonAsync(CancellationToken ct);
 }

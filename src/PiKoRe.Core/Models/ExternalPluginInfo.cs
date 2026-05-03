@@ -12,6 +12,7 @@ public sealed record ExternalPluginInfo(
     Uri Endpoint,
     IReadOnlyList<string> CapabilitiesProduced,
     IReadOnlyList<string> RequiredCapabilities,
+    IReadOnlyList<string> SupportedMediaTypes,
     int GpuMemoryMb,
     DateTimeOffset RegisteredAt
 );

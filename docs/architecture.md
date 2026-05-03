@@ -71,11 +71,12 @@ The plugin system defines a protocol, not a runtime. The core does not know or c
 - How it loads models
 - Whether it is one process or ten
 
-The only contract between core and plugin:
+The dispatch contract (see DECISIONS.md D-021, D-022):
 
-1. Plugin registers at startup via HTTP POST to core's registration endpoint
-2. Core calls the plugin via HTTP POST with a JSON payload
-3. Plugin returns a JSON result
+1. Plugin registers at startup via HTTP POST to core's registration endpoint (`:7700`)
+2. **Core dispatches jobs only via `IInProcessPlugin.AnalyzeAsync` — never outbound HTTP**
+3. External services (Python etc.) are wrapped by a C# adapter plugin that implements `IInProcessPlugin` and handles all transport internally
+4. `IExternalPlugin` does not exist — use `ExternalPluginInfo` record for metadata only
 
 Everything else is the plugin's private business.
 
@@ -87,6 +88,7 @@ Everything else is the plugin's private business.
   "version": "1.0.0",
   "capabilities_produced": ["faces"],
   "requires_capabilities": ["thumbnail"],
+  "supported_media_types": ["image/*"],
   "endpoint": "http://localhost:5001",
   "gpu_memory_mb": 1200,
   "startup_command": null
@@ -274,14 +276,12 @@ POST http://localhost:7700/api/jobs/{job_id}/progress
 | `YoloDotNet` | YOLO object detection in C# |
 | `FaceONNX` | Face pipeline in C# |
 | `Npgsql` | PostgreSQL driver |
-| `Dapper` | Complex reads (raw SQL + mapping) |
-| `Microsoft.EntityFrameworkCore` | Schema management + CRUD |
+| `Dapper` | All SQL queries (raw SQL + mapping) — EF Core not used (see DECISIONS.md D-015) |
 | `Microsoft.Data.Sqlite` | Framework-internal SQLite |
 | `DbUp` | SQL migration runner |
 | `Microsoft.Extensions.Hosting` | Generic host, background services |
 | `MediatR` | In-process event bus |
 | `Polly` | Resilience: retries, circuit breakers |
-| `System.Threading.Channels` | Producer/consumer queues |
 | `Serilog` + sinks | Structured logging |
 | `OpenTelemetry` | Traces + metrics |
 | `xUnit` + `Testcontainers.PostgreSql` | Testing |
@@ -378,7 +378,7 @@ This is a kickoff design. All decisions are overridable. If something seems wron
 4. Confirm you are on the correct branch
 
 ### Technology rules
-- Target **.NET 9** (or latest stable). No .NET Framework or .NET Core 3.1 era patterns.
+- Target **.NET 10** (current LTS). No .NET Framework or .NET Core 3.1 era patterns.
 - **Avalonia** for UI. Not WPF, not MAUI.
 - **Serilog** for logging. No `Console.WriteLine` in production code paths.
 - **OpenTelemetry** for traces and metrics. Use `ActivitySource` and `Meter`.

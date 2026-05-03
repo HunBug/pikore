@@ -9,5 +9,7 @@ public sealed record Job(
     int Priority,
     DateTimeOffset Created,
     DateTimeOffset Updated,
-    string? Error
+    string? Error,
+    string? FilePath,
+    string? MediaType
 );
