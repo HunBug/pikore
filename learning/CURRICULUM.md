@@ -55,10 +55,10 @@ Reference a generated image in a lesson with: `![Description](../assets/diagram_
 
 | # | Episode opening | Tracks | Status | Key files |
 |---|-----------------|--------|--------|-----------|
-| L001 | You see `IPlugin`, `IJobRunner`, `IJobQueue` everywhere. What is an `interface` and why does every important thing in this repo have one? | csharp, arch | planned | `Core/Abstractions/IPlugin.cs`, `IJobRunner.cs`, `IJobQueue.cs` |
-| L002 | You look at `Job`, `JobResult`, `IndexedFile`. They're defined with `record`, not `class`. What's the difference, and why does it matter for a pipeline? | csharp | planned | `Core/Models/Job.cs`, `JobResult.cs`, `IndexedFile.cs` |
-| L003 | Every single method ends with `CancellationToken ct`. What is this? What happens if you ignore it? | csharp | planned | `Data/SqliteJobQueue.cs`, `Core/Pipeline/LocalSequentialRunner.cs` |
-| L004 | Some fields are `string?` or `Guid?` — the question mark means something. Others crash if they're null. How does C# track this? | csharp | planned | `Core/Models/Job.cs` (`FilePath?`, `MediaType?`), `IMediaStore.cs` |
+| L001 | You see `IPlugin`, `IJobRunner`, `IJobQueue` everywhere. What is an `interface` and why does every important thing in this repo have one? | csharp, arch | done @ `a96b94c` | `Core/Abstractions/IPlugin.cs`, `IJobRunner.cs`, `IJobQueue.cs` |
+| L002 | You look at `Job`, `JobResult`, `IndexedFile`. They're defined with `record`, not `class`. What's the difference, and why does it matter for a pipeline? | csharp | done @ `a96b94c` | `Core/Models/Job.cs`, `JobResult.cs`, `IndexedFile.cs` |
+| L003 | Every single method ends with `CancellationToken ct`. What is this? What happens if you ignore it? | csharp | done @ `a96b94c` | `Data/SqliteJobQueue.cs`, `Core/Pipeline/LocalSequentialRunner.cs` |
+| L004 | Some fields are `string?` or `Guid?` — the question mark means something. Others crash if they're null. How does C# track this? | csharp | done @ `a96b94c` | `Core/Models/Job.cs` (`FilePath?`, `MediaType?`), `IMediaStore.cs` |
 
 ### Block B — The data layer (write at git `d96de42b` or after Phase 4)
 

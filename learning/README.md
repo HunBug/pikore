@@ -54,7 +54,10 @@ git checkout d96de42b
 
 | # | Title | Date | Tracks | Git ref |
 |---|-------|------|--------|---------|
-| — | *No lessons yet — first lesson will be written in the next session* | — | — | — |
+| L001 | Interfaces: why everything important has one | 2026-05-03 | csharp, arch | `a96b94c` |
+| L002 | Records vs classes: data that travels through a pipeline | 2026-05-03 | csharp | `a96b94c` |
+| L003 | CancellationToken: the polite way to stop | 2026-05-03 | csharp | `a96b94c` |
+| L004 | Nullable types: making "no value" explicit | 2026-05-03 | csharp | `a96b94c` |
 
 ---
 
